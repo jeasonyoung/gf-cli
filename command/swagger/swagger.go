@@ -58,6 +58,7 @@ func Run() {
 	parser, err := gcmd.Parse(g.MapStrBool{
 		"s,server": true,
 		"o,output": true,
+		"d,dir":    true,
 		"pack":     false,
 	})
 	if err != nil {
@@ -65,13 +66,14 @@ func Run() {
 	}
 	server := parser.GetOpt("server")
 	output := parser.GetOpt("output", defaultOutput)
+	dir := parser.GetOpt("dir", ".")
 	// Generate swagger files.
-	if err := generateSwaggerFiles(output, parser.ContainsOpt("pack")); err != nil {
+	if err := generateSwaggerFiles(dir, output, parser.ContainsOpt("pack")); err != nil {
 		mlog.Print(err)
 	}
 	// Watch the go file changes and regenerate the swagger files.
 	dirty := gtype.NewBool()
-	_, err = gfsnotify.Add(gfile.RealPath("."), func(event *gfsnotify.Event) {
+	_, err = gfsnotify.Add(gfile.RealPath(dir), func(event *gfsnotify.Event) {
 		if gfile.ExtName(event.Path) != "go" || gstr.Contains(event.Path, "swagger") {
 			return
 		}
@@ -83,7 +85,7 @@ func Run() {
 		gtimer.SetTimeout(1500*gtime.MS, func() {
 			mlog.Printf(`go file changes: %s`, event.String())
 			mlog.Print(`reproducing swagger files...`)
-			if err := generateSwaggerFiles(output, parser.ContainsOpt("pack")); err != nil {
+			if err := generateSwaggerFiles(dir, output, parser.ContainsOpt("pack")); err != nil {
 				mlog.Print(err)
 			} else {
 				mlog.Print(`done!`)
@@ -107,14 +109,14 @@ func Run() {
 }
 
 // generateSwaggerFiles generates necessary swagger files.
-func generateSwaggerFiles(output string, pack bool) error {
+func generateSwaggerFiles(dir, output string, pack bool) error {
 	mlog.Print(`producing swagger files...`)
 	// Temporary storing swagger files directory.
 	tempOutputPath := gfile.Join(gfile.TempDir(), "swagger")
 	if gfile.Exists(tempOutputPath) {
-		gfile.Remove(tempOutputPath)
+		_ = gfile.Remove(tempOutputPath)
 	}
-	gfile.Mkdir(tempOutputPath)
+	_ = gfile.Mkdir(tempOutputPath)
 	// Check and install swag tool.
 	swag := gproc.SearchBinary("swag")
 	if swag == "" {
@@ -124,7 +126,7 @@ func generateSwaggerFiles(output string, pack bool) error {
 		}
 	}
 	// Generate swagger files using swag.
-	command := fmt.Sprintf(`swag init -o %s`, tempOutputPath)
+	command := fmt.Sprintf(`swag init -d %s -o %s`, dir, tempOutputPath)
 	result, err := gproc.ShellExec(command)
 	if err != nil {
 		return errors.New(result + err.Error())
@@ -133,7 +135,7 @@ func generateSwaggerFiles(output string, pack bool) error {
 		return errors.New("make swagger files failed")
 	}
 	if !gfile.Exists(output) {
-		gfile.Mkdir(output)
+		_ = gfile.Mkdir(output)
 	}
 	if err = gfile.CopyFile(
 		gfile.Join(tempOutputPath, "swagger.json"),
